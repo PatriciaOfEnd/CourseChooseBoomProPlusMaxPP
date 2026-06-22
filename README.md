@@ -1,4 +1,4 @@
-# CourseChooseBoomProPlusMaxPP
+# ☢️ CourseChooseBoomProPlusMax++
 
 西电选课系统抢课助手。脚本运行在选课页面内，复用页面已有登录态和请求环境，自动保存待选课程，并按配置轮询提交选课请求。
 
@@ -43,8 +43,8 @@ https://xk.xidian.edu.cn/xsxk/elective/grablessons*
 ## 文件
 
 - `main.js`：混淆后的 userscript 主文件。
-- `grab.user.js`：与 `main.js` 同步的 userscript 文件。
 - `README.md`：项目说明。
+- `LICENSE`：开源许可证。
 
 ## 说明
 
