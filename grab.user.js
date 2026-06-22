@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CourseChooseBoom
 // @namespace    course-choose-boom
-// @version      1.0
+// @version      1.1
 // @description  西电选课系统抢课脚本 — 打开页面即用，课程配置自动保存
 // @author       CourseChooseBoom
 // @match        https://xk.xidian.edu.cn/xsxk/elective/grablessons*
@@ -13,7 +13,8 @@
     "use strict";
 
     // ===================== 常量 =====================
-    const LS_KEY = "ccb_courses";
+    const LS_KEY =
+        "ccb_courses_" + (new URLSearchParams(location.search).get("batchId") || "default");
     const PANEL_ID = "ccb-panel";
     const LOG_MAX = 200; // 日志最多保留条数
 
@@ -112,6 +113,37 @@
     padding: 8px 10px; font-size: 11px; font-family: monospace;
     max-height: 180px; overflow-y: auto; line-height: 1.5;
 }
+.ccb-search-results {
+    border: 1px solid #ebeef5; border-radius: 6px; margin-bottom: 8px;
+    max-height: 220px; overflow-y: auto; background: #fff;
+}
+.ccb-search-item {
+    display: flex; align-items: center; padding: 6px 10px;
+    border-bottom: 1px solid #f0f0f0; gap: 6px; font-size: 11px;
+}
+.ccb-search-item:last-child { border-bottom: none; }
+.ccb-search-item-main { flex: 1; min-width: 0; }
+.ccb-search-item-code { font-weight: 700; font-family: monospace; font-size: 12px; }
+.ccb-search-item-meta { color: #909399; margin-top: 2px; }
+.ccb-search-item-cap { color: #606266; white-space: nowrap; text-align: right; }
+.ccb-search-item-cap .ccb-cap-left { color: #67c23a; font-weight: 600; }
+.ccb-search-add {
+    background: #2655c8; color: #fff; border: none; border-radius: 4px;
+    padding: 3px 10px; cursor: pointer; font-size: 11px; white-space: nowrap;
+}
+.ccb-search-add:hover { background: #1a3f9e; }
+.ccb-search-add:disabled { background: #c0c4cc; cursor: not-allowed; }
+.ccb-search-empty { padding: 16px; text-align: center; color: #c0c4cc; font-size: 12px; }
+.ccb-search-loading { padding: 12px; text-align: center; color: #909399; font-size: 12px; }
+.ccb-search-hdr {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 10px; font-size: 11px; color: #909399;
+}
+.ccb-search-close {
+    background: none; border: none; color: #c0c4cc; cursor: pointer; font-size: 14px;
+}
+.ccb-search-close:hover { color: #f56c6c; }
+
 .ccb-log-item { padding: 1px 0; }
 .ccb-log-info  { color: #d4d4d4; }
 .ccb-log-found { color: #569cd6; }
@@ -134,7 +166,7 @@
     }
 
     // ===================== 状态 =====================
-    let courses = []; // { code, name, note }
+    let courses = []; // { code, name, note, jxbid?, secretVal? }  jxbid为空=任意班
     let interval = 800;
     let running = false;
     let stopped = false;
@@ -181,21 +213,42 @@
             const raw = localStorage.getItem(LS_KEY);
             if (raw) {
                 const data = JSON.parse(raw);
-                courses = data.courses || [];
+                courses = (data.courses || []).map(function (c) {
+                    // 兼容旧数据：无 jxbid 字段的课程视为"任意班"
+                    if (!("jxbid" in c)) {
+                        c.jxbid = null;
+                        c.secretVal = null;
+                    }
+                    return c;
+                });
                 interval = data.interval || 800;
                 return;
             }
         } catch (_) {
             /* */
         }
-        // 默认课程（首次使用）
-        courses = [
-            { code: "24IC7242", name: "", note: "电子数据取证基础" },
-            { code: "24TS2005", name: "", note: "平面设计艺术与实践" },
-            { code: "24TS1218", name: "", note: "道家哲学与文化" },
-            { code: "24TS1248", name: "", note: "神话故事与中国传统文化" },
-            { code: "24TS4206", name: "", note: "知识产权入门指南" },
-        ];
+        // 兼容迁移：旧 key "ccb_courses" 有数据则迁到新 batchId key
+        try {
+            const oldRaw = localStorage.getItem("ccb_courses");
+            if (oldRaw) {
+                const oldData = JSON.parse(oldRaw);
+                courses = (oldData.courses || []).map(function (c) {
+                    if (!("jxbid" in c)) {
+                        c.jxbid = null;
+                        c.secretVal = null;
+                    }
+                    return c;
+                });
+                interval = oldData.interval || 800;
+                saveConfig();
+                localStorage.removeItem("ccb_courses");
+                return;
+            }
+        } catch (_) {
+            /* */
+        }
+        // 首次使用：空列表，用搜索面板添加
+        courses = [];
     }
 
     function saveConfig() {
@@ -233,6 +286,11 @@
         el.innerHTML = courses
             .map((c, i) => {
                 const displayName = c.name || c.note || "";
+                const sectionTag = c.jxbid
+                    ? '<span style="color:#909399;font-size:11px;flex-shrink:0">' +
+                      (c.note || "") +
+                      "</span>"
+                    : '<span style="color:#e6a23c;font-size:11px;flex-shrink:0">任意班</span>';
                 const isGrabbed = grabbed.includes(c.code);
                 const isSkipped = skipped.includes(c.code);
                 const doneClass = isGrabbed ? " ccb-grabbed" : isSkipped ? " ccb-skipped" : "";
@@ -245,6 +303,7 @@
                 <div class="ccb-course-item${doneClass}${activeClass}" draggable="true" data-idx="${i}">
                     <span class="ccb-course-code">${c.code}</span>
                     <span class="ccb-course-name">${displayName}</span>
+                    ${sectionTag}
                     ${badge}
                     <button class="ccb-course-del" data-idx="${i}" title="删除">×</button>
                 </div>`;
@@ -338,6 +397,26 @@
         return "S";
     }
 
+    // 按关键词搜索（供面板搜索用，返回原始 rows 数组）
+    async function searchByKeyword(keyword) {
+        let res;
+        try {
+            res = await axios.post("/elective/clazz/list", {
+                teachingClassType: "XGKC",
+                campus: getCampus(),
+                pageNumber: 1,
+                pageSize: 20,
+                KEY: keyword,
+                orderBy: "",
+            });
+        } catch (_) {
+            return [];
+        }
+        if (!res || typeof res.data !== "object" || !res.data || res.data.code !== 200) return [];
+        return (res.data.data && res.data.data.rows) || [];
+    }
+
+    // 按精确课程号搜索（供抢课循环用，返回所有匹配的教学班）
     async function searchCourse(code) {
         let res;
         try {
@@ -350,16 +429,18 @@
                 orderBy: "",
             });
         } catch (_) {
-            return null; // 网络级别的失败
+            return []; // 网络级别的失败
         }
         // 响应校验：服务端可能崩了返回非 JSON
         if (!res || typeof res.data !== "object" || !res.data || !res.data.code) {
-            return null;
+            return [];
         }
-        if (res.data.code !== 200) return null;
+        if (res.data.code !== 200) return [];
         const rows = res.data.data && res.data.data.rows;
-        if (!rows || !rows.length) return null;
-        return rows.find((r) => r.KCH === code) || null;
+        if (!rows || !rows.length) return [];
+        return rows.filter(function (r) {
+            return r.KCH === code;
+        });
     }
 
     async function addCourse(courseObj) {
@@ -462,99 +543,143 @@
             attempts++;
 
             try {
-                const found = await searchCourse(target.code);
+                const sections = await searchCourse(target.code);
 
-                if (found) {
+                if (sections.length > 0) {
                     consecutiveFails = 0; // 能搜到课 → 服务端正常，重置退避
 
-                    // 回填课程名
-                    if (!target.name && found.KCM) {
-                        target.name = found.KCM;
+                    // 回填课程名（取第一个结果的课程名）
+                    if (!target.name && sections[0].KCM) {
+                        target.name = sections[0].KCM;
                         saveConfig();
                         renderCourseList();
                     }
-                    log(
-                        "🎯 " +
-                            target.code +
-                            " " +
-                            (found.KCM || "") +
-                            " | " +
-                            found.SKJS +
-                            " | " +
-                            (found.YXRS || "?") +
-                            "/" +
-                            (found.KRL || "?"),
-                        "found",
-                    );
 
-                    const result = await addCourse(found);
-
-                    if (result.code === 200) {
-                        log("📨 " + target.code + " 已提交选课请求，等待队列处理...");
-
-                        // 等 1 秒让队列处理
-                        await wait(1000);
-
-                        const verified = await verifyCourseGrab(target.code);
-
-                        if (verified) {
+                    // 确定候选教学班
+                    let candidates;
+                    if (target.jxbid) {
+                        candidates = sections.filter(function (s) {
+                            return s.JXBID === target.jxbid;
+                        });
+                        if (!candidates.length) {
                             log(
-                                "✅ " +
-                                    target.code +
-                                    " " +
-                                    target.name +
-                                    " 抢课成功！（已通过已选列表验证）",
-                                "success",
-                            );
-                            grabbed.push(target.code);
-                            consecutiveFails = 0;
-                            saveConfig();
-                            renderCourseList();
-                            updateProgress();
-                            beep(true);
-
-                            if (window.grablessonsVue) {
-                                window.grablessonsVue.$message({
-                                    type: "success",
-                                    message:
-                                        "🎉 " +
-                                        target.code +
-                                        " " +
-                                        (target.name || "") +
-                                        " 抢课成功！",
-                                    duration: 8000,
-                                    showClose: true,
-                                });
-                            }
-
-                            if (grabbed.length < courses.length) {
-                                await wait(1000);
-                            }
-                            continue;
-                        } else {
-                            log(
-                                "❌ " +
-                                    target.code +
-                                    " 验证失败：未在已选列表中出现（可能队列未处理或被驳回），重试中...",
+                                "⚠️ " + target.code + " 指定教学班未在搜索结果中，等待下次重试",
                                 "warn",
                             );
                             consecutiveFails++;
-                            // 不标记为 grabbed，下一轮循环会重试
                         }
-                    } else if (result.code === 401 || result.code === 402 || result.code === 403) {
-                        log("❌ 登录已过期，请重新登录！", "error");
-                        stopped = true;
-                        break;
                     } else {
+                        candidates = sections;
+                    }
+
+                    // 逐个尝试候选教学班
+                    let sectionSuccess = false;
+                    for (let si = 0; si < candidates.length && !sectionSuccess && !stopped; si++) {
+                        const section = candidates[si];
+                        const sectionTag =
+                            sections.length > 1
+                                ? "[" + (si + 1) + "/" + candidates.length + "] "
+                                : "";
+
                         log(
-                            "⚠️ " +
+                            "🎯 " +
+                                sectionTag +
                                 target.code +
-                                " [" +
-                                result.code +
-                                "] " +
-                                (result.msg || "未知错误"),
-                            "warn",
+                                " " +
+                                (section.KCM || "") +
+                                " | " +
+                                section.SKJS +
+                                " | " +
+                                (section.SKSJDD || section.SKZC || "?") +
+                                " | " +
+                                (section.YXRS || "?") +
+                                "/" +
+                                (section.KRL || "?"),
+                            "found",
                         );
+
+                        const result = await addCourse(section);
+
+                        if (result.code === 200) {
+                            log("📨 " + target.code + " 已提交选课请求，等待队列处理...");
+
+                            // 等 1 秒让队列处理
+                            await wait(1000);
+
+                            const verified = await verifyCourseGrab(target.code);
+
+                            if (verified) {
+                                log(
+                                    "✅ " +
+                                        target.code +
+                                        " " +
+                                        (target.name || "") +
+                                        " 抢课成功！（已通过已选列表验证）",
+                                    "success",
+                                );
+                                grabbed.push(target.code);
+                                sectionSuccess = true;
+                                consecutiveFails = 0;
+                                saveConfig();
+                                renderCourseList();
+                                updateProgress();
+                                beep(true);
+
+                                if (window.grablessonsVue) {
+                                    window.grablessonsVue.$message({
+                                        type: "success",
+                                        message:
+                                            "🎉 " +
+                                            target.code +
+                                            " " +
+                                            (target.name || "") +
+                                            " 抢课成功！",
+                                        duration: 8000,
+                                        showClose: true,
+                                    });
+                                }
+
+                                if (grabbed.length < courses.length) {
+                                    await wait(1000);
+                                }
+                            } else {
+                                log(
+                                    "❌ " +
+                                        target.code +
+                                        " 验证失败：未在已选列表中出现（可能队列未处理或被驳回）",
+                                    "warn",
+                                );
+                                // 如果有多个候选，继续尝试下一个
+                                if (si < candidates.length - 1) {
+                                    log("⏭ 尝试下一个教学班...");
+                                }
+                            }
+                        } else if (
+                            result.code === 401 ||
+                            result.code === 402 ||
+                            result.code === 403
+                        ) {
+                            log("❌ 登录已过期，请重新登录！", "error");
+                            stopped = true;
+                            break;
+                        } else {
+                            log(
+                                "⚠️ " +
+                                    target.code +
+                                    " [" +
+                                    result.code +
+                                    "] " +
+                                    (result.msg || "未知错误"),
+                                "warn",
+                            );
+                            // 如果有多个候选，继续尝试下一个
+                            if (si < candidates.length - 1) {
+                                log("⏭ 尝试下一个教学班...");
+                            }
+                        }
+                    }
+
+                    if (!sectionSuccess && !stopped) {
                         consecutiveFails++;
                     }
                 } else {
@@ -628,7 +753,7 @@
         panel.id = PANEL_ID;
         panel.innerHTML = `
 <div class="ccp-header" id="ccb-header">
-    <span>🔫 CourseChooseBoom <span style="font-weight:400;font-size:11px;opacity:.7">v1.0</span></span>
+    <span>🔫 CourseChooseBoom <span style="font-weight:400;font-size:11px;opacity:.7">v1.1</span></span>
     <span>
         <button class="ccp-hdr-btn" id="ccb-btn-min" title="最小化">−</button>
         <button class="ccp-hdr-btn" id="ccb-btn-close" title="关闭">×</button>
@@ -636,10 +761,10 @@
 </div>
 <div class="ccp-body" id="ccb-body">
     <div class="ccp-row">
-        <input id="ccb-input-code"  class="ccp-input" style="flex:2" placeholder="课程号，如 24TS2244" maxlength="20">
-        <input id="ccb-input-note"  class="ccp-input" style="flex:1" placeholder="备注(可选)" maxlength="50">
-        <button id="ccb-btn-add" class="ccp-btn ccp-btn-sm">+添加</button>
+        <input id="ccb-input-keyword" class="ccp-input" style="flex:2" placeholder="课程号或关键词，如 24TS2244" maxlength="40">
+        <button id="ccb-btn-search" class="ccp-btn ccp-btn-sm">🔍 搜索</button>
     </div>
+    <div class="ccb-search-results" id="ccb-search-results" style="display:none"></div>
     <div class="ccb-course-list" id="ccb-course-list"></div>
     <div class="ccp-row ccp-row-sm">
         <label>间隔</label>
@@ -704,29 +829,176 @@
 
     // ===================== 事件绑定 =====================
     function bindEvents() {
-        document.getElementById("ccb-btn-add").addEventListener("click", function () {
-            const codeEl = document.getElementById("ccb-input-code");
-            const noteEl = document.getElementById("ccb-input-note");
-            const code = codeEl.value.trim().toUpperCase();
-            if (!code) return;
-            if (courses.find((c) => c.code === code)) {
-                log("⚠️ 课程 " + code + " 已存在");
-                return;
-            }
-            const noteVal = noteEl.value.trim();
-            courses.push({ code, name: "", note: noteVal });
-            saveConfig();
-            renderCourseList();
-            updateProgress();
-            codeEl.value = "";
-            noteEl.value = "";
-            log("+ " + code + (noteVal ? " (" + noteVal + ")" : ""));
+        const keywordEl = document.getElementById("ccb-input-keyword");
+        const searchBtn = document.getElementById("ccb-btn-search");
+        const resultsEl = document.getElementById("ccb-search-results");
+
+        // 搜索按钮
+        searchBtn.addEventListener("click", function () {
+            doSearch();
         });
 
-        // 回车添加
-        document.getElementById("ccb-input-code").addEventListener("keydown", function (e) {
-            if (e.key === "Enter") document.getElementById("ccb-btn-add").click();
+        // 回车：优先触发搜索；如果没有搜索结果区内容，当作快速添加（纯课程号）
+        keywordEl.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") {
+                const kw = keywordEl.value.trim().toUpperCase();
+                if (!kw) return;
+                // 如果输入的是纯课程号（无空格且长度≥6），快速添加任意班
+                if (
+                    /^[A-Z0-9]{6,}$/.test(kw) &&
+                    courses.every(function (c) {
+                        return c.code !== kw;
+                    })
+                ) {
+                    courses.push({ code: kw, name: "", note: "", jxbid: null, secretVal: null });
+                    saveConfig();
+                    renderCourseList();
+                    updateProgress();
+                    keywordEl.value = "";
+                    hideSearchResults();
+                    log("+ " + kw + " (任意班)");
+                } else {
+                    doSearch();
+                }
+            }
         });
+
+        function doSearch() {
+            const kw = keywordEl.value.trim().toUpperCase();
+            if (!kw) return;
+
+            showSearchResults('<div class="ccb-search-loading">搜索中...</div>');
+            searchByKeyword(kw)
+                .then(function (rows) {
+                    if (!rows.length) {
+                        showSearchResults('<div class="ccb-search-empty">未找到匹配课程</div>');
+                        return;
+                    }
+                    // 从 JXBID 末尾提取班号，如 "xxx01" → "[01]"
+                    const courseCodes = {};
+                    rows.forEach(function (r) {
+                        courseCodes[r.KCH] = true;
+                    });
+                    const courseCount = Object.keys(courseCodes).length;
+
+                    let html =
+                        '<div class="ccb-search-hdr"><span>搜到 ' +
+                        courseCount +
+                        " 门课程，" +
+                        rows.length +
+                        ' 个教学班</span><button class="ccb-search-close" id="ccb-search-close">×</button></div>';
+                    rows.forEach(function (r) {
+                        const sectionNum = r.KXH || (r.JXBID || "").slice(-2) || "";
+                        const sectionLabel = sectionNum
+                            ? " [" + sectionNum.padStart(2, "0") + "]"
+                            : "";
+                        const alreadyAdded = courses.some(function (c) {
+                            return c.code === r.KCH && c.jxbid === r.JXBID;
+                        });
+                        const left = r.KRL - (r.YXRS || 0);
+                        const teacherStr = Array.isArray(r.SKJS)
+                            ? r.SKJS.map(function (t) {
+                                  return t.XM || t.xm || t.name || "";
+                              })
+                                  .filter(Boolean)
+                                  .join(", ")
+                            : r.SKJS || "";
+                        const timeInfo = r.teachingPlace || "";
+                        html +=
+                            '<div class="ccb-search-item">' +
+                            '<div class="ccb-search-item-main">' +
+                            '<span class="ccb-search-item-code">' +
+                            r.KCH +
+                            sectionLabel +
+                            "</span>" +
+                            " <span>" +
+                            (r.KCM || "") +
+                            "</span>" +
+                            '<div class="ccb-search-item-meta">' +
+                            (teacherStr || "") +
+                            (timeInfo ? " | " + timeInfo : "") +
+                            "</div>" +
+                            "</div>" +
+                            '<div class="ccb-search-item-cap">' +
+                            '<span class="ccb-cap-left">' +
+                            (left >= 0 ? left : "?") +
+                            "</span>" +
+                            "/" +
+                            (r.KRL || "?") +
+                            "</div>" +
+                            '<button class="ccb-search-add" data-jxbid="' +
+                            r.JXBID +
+                            '" data-code="' +
+                            r.KCH +
+                            '" data-name="' +
+                            (r.KCM || "").replace(/"/g, "&quot;") +
+                            '" data-secret="' +
+                            (r.secretVal || "") +
+                            '" data-teacher="' +
+                            teacherStr.replace(/"/g, "&quot;") +
+                            '" data-kxh="' +
+                            (r.KXH || (r.JXBID || "").slice(-2) || "") +
+                            '"' +
+                            (alreadyAdded ? " disabled" : "") +
+                            ">" +
+                            (alreadyAdded ? "已添加" : "+添加") +
+                            "</button>" +
+                            "</div>";
+                    });
+                    showSearchResults(html);
+                    // 关闭按钮
+                    document
+                        .getElementById("ccb-search-close")
+                        .addEventListener("click", hideSearchResults);
+                    // 添加按钮
+                    resultsEl.querySelectorAll(".ccb-search-add").forEach(function (btn) {
+                        btn.addEventListener("click", function () {
+                            if (this.disabled) return;
+                            const code = this.dataset.code;
+                            const name = this.dataset.name;
+                            const jxbid = this.dataset.jxbid;
+                            const secretVal = this.dataset.secret;
+                            const teacher = this.dataset.teacher;
+                            const kxh = this.dataset.kxh;
+                            const sectionTag = kxh ? "[" + kxh.padStart(2, "0") + "] " : "";
+                            const note = sectionTag + teacher;
+                            courses.push({
+                                code: code,
+                                name: name,
+                                note: note,
+                                jxbid: jxbid,
+                                secretVal: secretVal,
+                            });
+                            saveConfig();
+                            renderCourseList();
+                            updateProgress();
+                            hideSearchResults();
+                            keywordEl.value = "";
+                            log(
+                                "+ " +
+                                    code +
+                                    (kxh ? " [" + kxh.padStart(2, "0") + "]" : "") +
+                                    " (" +
+                                    teacher +
+                                    ")",
+                            );
+                        });
+                    });
+                })
+                .catch(function () {
+                    showSearchResults('<div class="ccb-search-empty">搜索失败，请重试</div>');
+                });
+        }
+
+        function showSearchResults(html) {
+            resultsEl.innerHTML = html;
+            resultsEl.style.display = "";
+        }
+
+        function hideSearchResults() {
+            resultsEl.style.display = "none";
+            resultsEl.innerHTML = "";
+        }
 
         document.getElementById("ccb-btn-start").addEventListener("click", startGrab);
         document.getElementById("ccb-btn-stop").addEventListener("click", stopGrab);

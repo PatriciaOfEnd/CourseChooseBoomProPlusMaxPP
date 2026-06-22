@@ -8,6 +8,7 @@ const config = [
             globals: {
                 // Browser
                 window: "readonly",
+                location: "readonly",
                 document: "readonly",
                 localStorage: "readonly",
                 sessionStorage: "readonly",
