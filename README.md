@@ -3,6 +3,7 @@
 > 西电选课系统抢课脚本 — 打开页面即用，课程配置自动保存
 
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![version](https://img.shields.io/badge/version-1.0-blue)](grab.user.js)
 [![platform](https://img.shields.io/badge/platform-Tampermonkey-orange)](https://www.tampermonkey.net/)
 [![target](https://img.shields.io/badge/target-xk.xidian.edu.cn-blue)](https://xk.xidian.edu.cn/)
 

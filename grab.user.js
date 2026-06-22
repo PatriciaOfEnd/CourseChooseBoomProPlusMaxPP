@@ -628,7 +628,7 @@
         panel.id = PANEL_ID;
         panel.innerHTML = `
 <div class="ccp-header" id="ccb-header">
-    <span>🔫 CourseChooseBoom</span>
+    <span>🔫 CourseChooseBoom <span style="font-weight:400;font-size:11px;opacity:.7">v1.0</span></span>
     <span>
         <button class="ccp-hdr-btn" id="ccb-btn-min" title="最小化">−</button>
         <button class="ccp-hdr-btn" id="ccb-btn-close" title="关闭">×</button>
